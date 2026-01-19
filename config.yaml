@@ -1,0 +1,46 @@
+# Audio settings
+audio:
+  device: "X32"  # Behringer X32 USB device name (partial match)
+  sample_rate: 16000
+  channels: 1
+  chunk_duration: 0.1  # seconds per audio chunk
+
+# Voice Activity Detection
+vad:
+  threshold: 0.5
+  min_speech_duration: 0.3  # seconds - minimum to consider speech
+  min_silence_duration: 0.4  # seconds - shorter pause triggers chunk
+  max_speech_duration: 5.0  # seconds - FORCE chunk at this length for real-time
+  speech_pad_duration: 0.2  # seconds - padding around speech
+
+# Speech-to-Text (Whisper)
+stt:
+  model: "small"  # small/medium for accuracy, uses MLX (Apple GPU) when available
+  language: "de"
+  device: "mlx"  # mlx = Apple GPU, cpu = faster-whisper
+  compute_type: "int8"  # Only used for CPU fallback
+
+# Translation (NLLB)
+translation:
+  model: "facebook/nllb-200-distilled-600M"
+  source_lang: "deu_Latn"  # German
+  target_lang: "pes_Arab"  # Persian/Farsi
+  device: "mps"
+  max_length: 512
+
+# Text-to-Speech (Piper)
+tts:
+  model: "fa_IR-amir-medium"  # Persian voice
+  speaker_id: 0
+  length_scale: 1.0  # Speed: <1 = faster, >1 = slower
+
+# Server
+server:
+  host: "0.0.0.0"  # Listen on all interfaces
+  port: 8000
+  buffer_size: 5  # Number of audio chunks to buffer
+
+# Pipeline (parallel processing)
+pipeline:
+  max_workers: 2  # 2 is optimal since MLX STT is serialized (thread lock)
+  max_queue_size: 10
