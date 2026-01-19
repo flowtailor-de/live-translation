@@ -75,7 +75,7 @@ class Translator:
         
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
             self.model_name,
-            torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
+            dtype=torch.float16 if self.device != "cpu" else torch.float32,
         ).to(self.device)
         
         self.model.eval()
