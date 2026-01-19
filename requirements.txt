@@ -15,7 +15,7 @@ scipy>=1.11.0
 # silero-vad (loaded via torch.hub)
 
 # Text-to-speech
-piper-tts>=1.2.0
+# piper-tts (using standalone binary)
 
 # Web server
 fastapi>=0.109.0

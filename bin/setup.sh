@@ -50,6 +50,18 @@ pip install -r requirements.txt
 echo "Attempting to install faster-whisper (CPU fallback)..."
 pip install faster-whisper>=1.0.0 || echo "⚠️  faster-whisper failed to install. CPU fallback will be unavailable, but MLX (GPU) will work."
 
+
+echo "Downloading Piper TTS binary (Apple Silicon)..."
+if [ ! -f "bin/piper/piper" ]; then
+    mkdir -p bin/piper_temp
+    curl -L "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_macos_aarch64.tar.gz" -o bin/piper_temp/piper.tar.gz
+    tar -xzf bin/piper_temp/piper.tar.gz -C bin/
+    rm -rf bin/piper_temp
+    echo "Piper binary installed to bin/piper/"
+else
+    echo "Piper binary already exists."
+fi
+
 echo "Downloading AI models (this may take a while)..."
 python -m src.download_models
 

@@ -61,14 +61,39 @@ def download_piper_voice(voice: str = "fa_IR-amir-medium"):
     """Download Piper voice model."""
     logger.info(f"Downloading Piper voice: {voice}...")
     
-    try:
-        # Try using piper-tts package
-        from piper import PiperVoice
-        PiperVoice.load(voice)
-        logger.info("Piper voice downloaded")
-    except Exception as e:
-        logger.warning(f"Could not download Piper voice automatically: {e}")
-        logger.info("You may need to download manually from: https://github.com/rhasspy/piper/releases")
+    # URLs
+    base_url = "https://huggingface.co/rhasspy/piper-voices/resolve/main/fa/fa_IR"
+    voice_name_parts = voice.split("-")
+    if len(voice_name_parts) >= 3:
+        speaker = voice_name_parts[1]
+        quality = voice_name_parts[2]
+        onnx_url = f"{base_url}/{speaker}/{quality}/{voice}.onnx"
+        json_url = f"{base_url}/{speaker}/{quality}/{voice}.onnx.json"
+        
+        # Download paths
+        from pathlib import Path
+        import urllib.request
+        
+        cache_dir = Path.home() / ".cache" / "piper-voices"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        onnx_path = cache_dir / f"{voice}.onnx"
+        json_path = cache_dir / f"{voice}.onnx.json"
+        
+        def _dl(url, dest):
+            if not dest.exists():
+                logger.info(f"Downloading {url}...")
+                urllib.request.urlretrieve(url, dest)
+        
+        try:
+            _dl(onnx_url, onnx_path)
+            _dl(json_url, json_path)
+            logger.info("Piper voice downloaded")
+        except Exception as e:
+            logger.warning(f"Failed to download Piper voice: {e}")
+            logger.info("You may need to download manually from HuggingFace.")
+    else:
+        logger.warning(f"Could not parse voice name: {voice}")
 
 
 def main():

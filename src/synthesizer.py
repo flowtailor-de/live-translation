@@ -110,28 +110,9 @@ class Synthesizer:
             self.model_path, self.config_path = ensure_voice_downloaded(self.voice)
         return self.model_path, self.config_path
     
-    def _load_piper(self):
-        """Load the Piper voice model."""
-        if self.piper_voice is not None:
-            return self.piper_voice
-        
-        onnx_path, json_path = self._ensure_model()
-        
-        try:
-            from piper import PiperVoice
-            logger.info(f"Loading Piper voice from {onnx_path}")
-            self.piper_voice = PiperVoice.load(str(onnx_path), str(json_path))
-            return self.piper_voice
-        except ImportError:
-            logger.warning("piper package not found, will use CLI")
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to load Piper via Python: {e}")
-            return None
-    
     def synthesize(self, text: str) -> Tuple[np.ndarray, int]:
         """
-        Synthesize speech from text.
+        Synthesize speech from text using Piper CLI.
         
         Args:
             text: Farsi text to synthesize
@@ -145,32 +126,10 @@ class Synthesizer:
         # Ensure model is downloaded
         onnx_path, json_path = self._ensure_model()
         
-        # Try Python API first
-        voice = self._load_piper()
-        if voice is not None:
-            return self._synthesize_python(voice, text)
-        
-        # Fall back to CLI
+        # Use CLI
         return self._synthesize_cli(text, onnx_path)
     
-    def _synthesize_python(self, voice, text: str) -> Tuple[np.ndarray, int]:
-        """Synthesize using Piper Python API."""
-        # synthesize() returns an Iterable[AudioChunk] with audio arrays
-        audio_arrays = []
-        sample_rate = 22050  # Default, will be updated from voice
-        
-        for audio_chunk in voice.synthesize(text):
-            # Use the float array directly
-            audio_arrays.append(audio_chunk.audio_float_array)
-            sample_rate = audio_chunk.sample_rate
-        
-        if not audio_arrays:
-            return np.array([], dtype=np.float32), self.sample_rate
-        
-        # Concatenate all audio arrays
-        audio = np.concatenate(audio_arrays)
-        
-        return audio, sample_rate
+
     
     def _synthesize_cli(self, text: str, model_path: Path) -> Tuple[np.ndarray, int]:
         """Synthesize using Piper CLI."""
@@ -204,6 +163,13 @@ class Synthesizer:
     
     def _find_piper(self) -> str:
         """Find Piper executable."""
+        # 1. Project local bin (highest priority)
+        project_root = Path(__file__).parent.parent
+        local_bin = project_root / "bin" / "piper" / "piper"
+        if local_bin.exists():
+            return str(local_bin)
+            
+        # 2. System path
         try:
             result = subprocess.run(["which", "piper"], capture_output=True, text=True)
             if result.returncode == 0:
@@ -211,6 +177,7 @@ class Synthesizer:
         except Exception:
             pass
         
+        # 3. Common paths
         common_paths = [
             os.path.expanduser("~/.local/bin/piper"),
             "/usr/local/bin/piper",
@@ -222,7 +189,7 @@ class Synthesizer:
                 return path
         
         raise FileNotFoundError(
-            "Piper not found. Install with: pip install piper-tts"
+            f"Piper binary not found at {local_bin} or in PATH. run ./bin/setup.sh"
         )
     
     def _read_wav(self, path: str) -> Tuple[np.ndarray, int]:
