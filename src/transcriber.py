@@ -176,7 +176,11 @@ class Transcriber:
         if self._mlx_available:
             self._mlx_transcriber.load_model()
         else:
-            self._load_faster_whisper()
+            try:
+                self._load_faster_whisper()
+            except ImportError:
+                logger.error("faster-whisper not installed and MLX not available/selected.")
+                raise RuntimeError("No transcription engine available. Install faster-whisper or use MLX.")
     
     def _load_faster_whisper(self) -> None:
         """Load faster-whisper model."""
@@ -184,8 +188,12 @@ class Transcriber:
             return
         
         logger.info(f"Loading faster-whisper {self.model_size}...")
-        from faster_whisper import WhisperModel
-        
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            logger.warning("faster-whisper package not found.")
+            raise
+
         self.model = WhisperModel(
             self.model_size,
             device="cpu",

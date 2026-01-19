@@ -15,13 +15,17 @@ def download_whisper(model_size: str = "medium"):
     """Download Whisper model."""
     logger.info(f"Downloading Whisper {model_size} model...")
     
-    from faster_whisper import WhisperModel
-    
-    # This will download the model to cache
-    model = WhisperModel(model_size, device="cpu", compute_type="int8")
-    del model
-    
-    logger.info("Whisper model downloaded")
+    try:
+        from faster_whisper import WhisperModel
+        
+        # This will download the model to cache
+        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        del model
+        logger.info("Whisper model downloaded")
+    except ImportError:
+        logger.warning(f"faster-whisper not installed. Skipping CPU model download.")
+    except Exception as e:
+        logger.warning(f"Failed to download faster-whisper model: {e}")
 
 
 def download_nllb(model_name: str = "facebook/nllb-200-distilled-600M"):

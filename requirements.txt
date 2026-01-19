@@ -1,5 +1,5 @@
 # Core dependencies
-faster-whisper>=1.0.0
+# faster-whisper removed (optional install)
 mlx-whisper>=0.2.0; sys_platform == 'darwin'
 transformers>=4.36.0
 torch>=2.1.0
