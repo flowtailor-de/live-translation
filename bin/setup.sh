@@ -47,8 +47,7 @@ echo "Installing dependencies..."
 pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 
-echo "Attempting to install faster-whisper (CPU fallback)..."
-pip install faster-whisper>=1.0.0 || echo "⚠️  faster-whisper failed to install. CPU fallback will be unavailable, but MLX (GPU) will work."
+
 
 
 echo "Downloading Piper TTS binary (Apple Silicon)..."
