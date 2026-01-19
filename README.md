@@ -51,29 +51,28 @@ git clone https://github.com/flowtailor-de/live-translation.git
 cd live-translation
 ```
 
-### 2. Backend Setup
-Create a virtual environment and install Python dependencies:
+### 2. Quick Setup (Recommended)
+Run the automated setup script to install all dependencies and download models:
+```bash
+./bin/setup.sh
+```
+
+### 3. Alternative Manual Setup
+If you prefer to set everything up manually:
+
+**Backend:**
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-
-# Install requirements
 pip install -r requirements.txt
+python -m src.download_models
 ```
 
-### 3. Frontend Setup
-Navigate to the UI directory and install dependencies:
+**Frontend:**
 ```bash
 cd ui
 npm install
 cd ..
-```
-
-### 4. Download Models
-Run the setup script to download necessary models (Whisper, NLLB, Piper) to your local cache:
-```bash
-source venv/bin/activate
-python -m src.download_models
 ```
 
 ## ⚙️ Configuration
@@ -96,23 +95,27 @@ translation:
 
 ## 🚦 Usage
 
-1.  **Start the Backend**:
+1.  **One-Click Start**:
     ```bash
+    ./bin/start.sh
+    ```
+    This launches both the Python backend and React frontend.
+
+2.  **Access the Interface**:
+    - Open `http://localhost:5173` on your computer.
+    - Connect mobile devices to the same Wi-Fi network and look for the IP address printed in the terminal.
+
+3.  **Manual Start (Dev Mode)**:
+    If you need to run services separately:
+    ```bash
+    # Terminal 1: Backend
     source venv/bin/activate
     python -m src.main
-    ```
 
-2.  **Start the Frontend** (Development):
-    ```bash
+    # Terminal 2: Frontend
     cd ui
     npm run dev
     ```
-    *Client URL: http://localhost:5173 (or your network IP)*
-
-3.  **Client Connection**:
-    - Users connect their devices to the same Wi-Fi network.
-    - Open the provided URL in a browser.
-    - Click "Join Stream" to hear the live translation.
 
 ## 🔧 Troubleshooting
 
