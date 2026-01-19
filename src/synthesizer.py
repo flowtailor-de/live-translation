@@ -135,11 +135,19 @@ class Synthesizer:
         """Synthesize using Piper CLI."""
         # Find piper executable
         piper_path = self._find_piper()
+        piper_dir = os.path.dirname(piper_path)
         
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             temp_path = f.name
         
         try:
+            # Prepare environment with DYLD_LIBRARY_PATH for macOS
+            env = os.environ.copy()
+            if "DYLD_LIBRARY_PATH" in env:
+                env["DYLD_LIBRARY_PATH"] = f"{piper_dir}:{env['DYLD_LIBRARY_PATH']}"
+            else:
+                env["DYLD_LIBRARY_PATH"] = piper_dir
+                
             process = subprocess.run(
                 [
                     piper_path,
@@ -149,6 +157,7 @@ class Synthesizer:
                 ],
                 input=text.encode("utf-8"),
                 capture_output=True,
+                env=env,
             )
             
             if process.returncode != 0:
