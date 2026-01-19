@@ -44,6 +44,7 @@ echo "Activating virtual environment..."
 source venv/bin/activate
 
 echo "Installing dependencies..."
+pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 
 echo "Downloading AI models (this may take a while)..."
