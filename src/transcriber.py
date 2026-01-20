@@ -1,5 +1,5 @@
 """
-Speech-to-Text module with MLX-Whisper (Apple Silicon GPU) and faster-whisper (CPU) support.
+Speech-to-Text module using MLX-Whisper (Apple Silicon GPU).
 Transcribes German speech to text.
 
 NOTE: MLX is not thread-safe, so we use a Lock to serialize transcription calls.
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     
     print("Testing Transcriber with MLX support...")
     
-    transcriber = Transcriber(model_size="small", use_mlx=True)
+    transcriber = Transcriber(model_size="small")
     transcriber.load_model()
     
     sample_rate = 16000

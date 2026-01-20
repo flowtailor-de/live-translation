@@ -71,7 +71,6 @@ export function useAudioStream(): AudioStreamState {
 
         ws.onopen = () => {
             setStatus('connected');
-            console.log('Connected to WebSocket');
         };
 
         ws.onmessage = async (event) => {
@@ -87,7 +86,7 @@ export function useAudioStream(): AudioStreamState {
                         setLatency(msg.latency);
                     }
                 } catch (e) {
-                    console.error('Error parsing message:', e);
+                    // Ignore parse errors for non-JSON messages
                 }
             } else if (event.data instanceof ArrayBuffer) {
                 await playAudioChunk(event.data);
@@ -99,8 +98,7 @@ export function useAudioStream(): AudioStreamState {
             wsRef.current = null;
         };
 
-        ws.onerror = (err) => {
-            console.error('WebSocket error:', err);
+        ws.onerror = () => {
             setStatus('error');
         };
 

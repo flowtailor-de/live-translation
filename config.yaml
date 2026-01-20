@@ -17,8 +17,8 @@ vad:
 stt:
   model: "small"  # small/medium for accuracy, uses MLX (Apple GPU) when available
   language: "de"
-  device: "mlx"  # mlx = Apple GPU, cpu = faster-whisper
-  compute_type: "int8"  # Only used for CPU fallback
+  device: "mlx"  # mlx = Apple Silicon GPU (required)
+  compute_type: "int8"  # Legacy option, ignored by MLX
 
 # Translation (NLLB)
 translation:
