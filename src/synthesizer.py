@@ -1,31 +1,27 @@
 """
 Text-to-Speech module using Piper.
 Generates Farsi audio from text.
+
+Uses the new piper-tts Python package (piper1-gpl) which embeds espeak-ng
+directly and works natively on Apple Silicon.
 """
 
 import numpy as np
-import subprocess
 import tempfile
 import wave
 import os
-import urllib.request
-import json
+import io
 from typing import Optional, Tuple
 from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Piper voice model URLs from HuggingFace
+# Piper voice model names for Farsi
+# These will be downloaded automatically by piper-tts
 PIPER_VOICES = {
-    "fa_IR-amir-medium": {
-        "onnx": "https://huggingface.co/rhasspy/piper-voices/resolve/main/fa/fa_IR/amir/medium/fa_IR-amir-medium.onnx",
-        "json": "https://huggingface.co/rhasspy/piper-voices/resolve/main/fa/fa_IR/amir/medium/fa_IR-amir-medium.onnx.json",
-    },
-    "fa_IR-gyro-medium": {
-        "onnx": "https://huggingface.co/rhasspy/piper-voices/resolve/main/fa/fa_IR/gyro/medium/fa_IR-gyro-medium.onnx",
-        "json": "https://huggingface.co/rhasspy/piper-voices/resolve/main/fa/fa_IR/gyro/medium/fa_IR-gyro-medium.onnx.json",
-    },
+    "fa_IR-amir-medium": "fa_IR-amir-medium",
+    "fa_IR-gyro-medium": "fa_IR-gyro-medium",
 }
 
 
@@ -36,46 +32,8 @@ def get_piper_cache_dir() -> Path:
     return cache_dir
 
 
-def download_file(url: str, dest: Path, desc: str = "Downloading") -> None:
-    """Download a file with progress."""
-    logger.info(f"{desc}: {url}")
-    
-    try:
-        urllib.request.urlretrieve(url, dest)
-        logger.info(f"Downloaded: {dest.name}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to download {url}: {e}")
-
-
-def ensure_voice_downloaded(voice_name: str) -> Tuple[Path, Path]:
-    """
-    Ensure the voice model is downloaded.
-    
-    Returns:
-        Tuple of (onnx_path, json_path)
-    """
-    if voice_name not in PIPER_VOICES:
-        raise ValueError(f"Unknown voice: {voice_name}. Available: {list(PIPER_VOICES.keys())}")
-    
-    cache_dir = get_piper_cache_dir()
-    voice_urls = PIPER_VOICES[voice_name]
-    
-    onnx_path = cache_dir / f"{voice_name}.onnx"
-    json_path = cache_dir / f"{voice_name}.onnx.json"
-    
-    # Download ONNX model if not exists
-    if not onnx_path.exists():
-        download_file(voice_urls["onnx"], onnx_path, f"Downloading {voice_name} ONNX model")
-    
-    # Download JSON config if not exists
-    if not json_path.exists():
-        download_file(voice_urls["json"], json_path, f"Downloading {voice_name} config")
-    
-    return onnx_path, json_path
-
-
 class Synthesizer:
-    """Synthesizes Farsi speech using Piper TTS."""
+    """Synthesizes Farsi speech using Piper TTS (Python API)."""
     
     def __init__(
         self,
@@ -98,21 +56,88 @@ class Synthesizer:
         self.length_scale = length_scale
         self.sample_rate = sample_rate
         
-        self.model_path: Optional[Path] = None
-        self.config_path: Optional[Path] = None
-        self.piper_voice = None
+        self._piper_voice = None
+        self._model_path: Optional[Path] = None
         
         logger.info(f"Synthesizer initialized with voice: {voice}")
     
-    def _ensure_model(self) -> Tuple[Path, Path]:
-        """Ensure the voice model is downloaded and return paths."""
-        if self.model_path is None or self.config_path is None:
-            self.model_path, self.config_path = ensure_voice_downloaded(self.voice)
-        return self.model_path, self.config_path
+    def _ensure_voice_loaded(self):
+        """Ensure the Piper voice is loaded."""
+        if self._piper_voice is not None:
+            return
+            
+        try:
+            from piper import PiperVoice
+        except ImportError:
+            raise ImportError(
+                "piper-tts package not found. Install with: pip install piper-tts"
+            )
+        
+        # Check if model exists in cache
+        cache_dir = get_piper_cache_dir()
+        model_path = cache_dir / f"{self.voice}.onnx"
+        
+        if not model_path.exists():
+            logger.info(f"Downloading voice model: {self.voice}")
+            self._download_voice(self.voice)
+        
+        self._model_path = model_path
+        logger.info(f"Loading Piper voice from: {model_path}")
+        self._piper_voice = PiperVoice.load(str(model_path))
+        logger.info("Piper voice loaded successfully")
+    
+    def _download_voice(self, voice_name: str):
+        """Download a voice model using piper's download utility."""
+        import subprocess
+        
+        cache_dir = get_piper_cache_dir()
+        
+        # Try using piper.download_voices module
+        try:
+            result = subprocess.run(
+                ["python3", "-m", "piper.download_voices", voice_name, "-d", str(cache_dir)],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                logger.info(f"Downloaded voice: {voice_name}")
+                return
+            else:
+                logger.warning(f"piper.download_voices failed: {result.stderr}")
+        except Exception as e:
+            logger.warning(f"Could not use piper.download_voices: {e}")
+        
+        # Fallback: download directly from HuggingFace
+        import urllib.request
+        
+        base_url = "https://huggingface.co/rhasspy/piper-voices/resolve/main/fa/fa_IR"
+        
+        # Parse voice name to get path components
+        # e.g., "fa_IR-amir-medium" -> "amir/medium"
+        parts = voice_name.split("-")
+        if len(parts) >= 3:
+            speaker = parts[1]
+            quality = parts[2]
+            
+            onnx_url = f"{base_url}/{speaker}/{quality}/{voice_name}.onnx"
+            json_url = f"{base_url}/{speaker}/{quality}/{voice_name}.onnx.json"
+            
+            onnx_path = cache_dir / f"{voice_name}.onnx"
+            json_path = cache_dir / f"{voice_name}.onnx.json"
+            
+            logger.info(f"Downloading ONNX model from: {onnx_url}")
+            urllib.request.urlretrieve(onnx_url, onnx_path)
+            
+            logger.info(f"Downloading config from: {json_url}")
+            urllib.request.urlretrieve(json_url, json_path)
+            
+            logger.info(f"Downloaded voice: {voice_name}")
+        else:
+            raise ValueError(f"Cannot parse voice name: {voice_name}")
     
     def synthesize(self, text: str) -> Tuple[np.ndarray, int]:
         """
-        Synthesize speech from text using Piper CLI.
+        Synthesize speech from text using Piper Python API.
         
         Args:
             text: Farsi text to synthesize
@@ -123,96 +148,38 @@ class Synthesizer:
         if not text or not text.strip():
             return np.array([], dtype=np.float32), self.sample_rate
         
-        # Ensure model is downloaded
-        onnx_path, json_path = self._ensure_model()
-        
-        # Use CLI
-        return self._synthesize_cli(text, onnx_path)
-    
-
-    
-    def _synthesize_cli(self, text: str, model_path: Path) -> Tuple[np.ndarray, int]:
-        """Synthesize using Piper CLI."""
-        # Find piper executable
-        piper_path = self._find_piper()
-        piper_dir = os.path.dirname(piper_path)
-        
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            temp_path = f.name
+        self._ensure_voice_loaded()
         
         try:
-            # Prepare environment with DYLD_LIBRARY_PATH for macOS
-            env = os.environ.copy()
-            if "DYLD_LIBRARY_PATH" in env:
-                env["DYLD_LIBRARY_PATH"] = f"{piper_dir}:{env['DYLD_LIBRARY_PATH']}"
-            else:
-                env["DYLD_LIBRARY_PATH"] = piper_dir
+            from piper import SynthesisConfig
             
-            # Build the command - use arch -x86_64 on macOS ARM64 because
-            # the official Piper "aarch64" release actually contains x86_64 binaries
-            import platform
-            cmd = [
-                piper_path,
-                "--model", str(model_path),
-                "--output_file", temp_path,
-                "--length_scale", str(self.length_scale),
-            ]
-            
-            # On macOS ARM64, run via Rosetta 2
-            if platform.system() == "Darwin" and platform.machine() == "arm64":
-                cmd = ["arch", "-x86_64"] + cmd
-                
-            process = subprocess.run(
-                cmd,
-                input=text.encode("utf-8"),
-                capture_output=True,
-                env=env,
+            # Create synthesis config with our settings
+            syn_config = SynthesisConfig(
+                length_scale=self.length_scale,
             )
             
-            if process.returncode != 0:
-                error = process.stderr.decode()
-                raise RuntimeError(f"Piper CLI failed: {error}")
-            
-            audio, sr = self._read_wav(temp_path)
-            return audio, sr
-        finally:
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+            # Synthesize to WAV in memory
+            with io.BytesIO() as wav_buffer:
+                with wave.open(wav_buffer, "wb") as wav_file:
+                    self._piper_voice.synthesize_wav(text, wav_file, syn_config=syn_config)
+                
+                wav_buffer.seek(0)
+                audio, sr = self._read_wav_from_buffer(wav_buffer)
+                return audio, sr
+                
+        except ImportError:
+            # Fallback if SynthesisConfig not available
+            with io.BytesIO() as wav_buffer:
+                with wave.open(wav_buffer, "wb") as wav_file:
+                    self._piper_voice.synthesize_wav(text, wav_file)
+                
+                wav_buffer.seek(0)
+                audio, sr = self._read_wav_from_buffer(wav_buffer)
+                return audio, sr
     
-    def _find_piper(self) -> str:
-        """Find Piper executable."""
-        # 1. Project local bin (highest priority)
-        project_root = Path(__file__).parent.parent
-        local_bin = project_root / "bin" / "piper" / "piper"
-        if local_bin.exists():
-            return str(local_bin)
-            
-        # 2. System path
-        try:
-            result = subprocess.run(["which", "piper"], capture_output=True, text=True)
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except Exception:
-            pass
-        
-        # 3. Common paths
-        common_paths = [
-            os.path.expanduser("~/.local/bin/piper"),
-            "/usr/local/bin/piper",
-            "/opt/homebrew/bin/piper",
-        ]
-        
-        for path in common_paths:
-            if os.path.exists(path):
-                return path
-        
-        raise FileNotFoundError(
-            f"Piper binary not found at {local_bin} or in PATH. run ./bin/setup.sh"
-        )
-    
-    def _read_wav(self, path: str) -> Tuple[np.ndarray, int]:
-        """Read a WAV file and return audio data."""
-        with wave.open(path, "rb") as wav:
+    def _read_wav_from_buffer(self, buffer: io.BytesIO) -> Tuple[np.ndarray, int]:
+        """Read a WAV from a BytesIO buffer and return audio data."""
+        with wave.open(buffer, "rb") as wav:
             sample_rate = wav.getframerate()
             n_frames = wav.getnframes()
             audio_bytes = wav.readframes(n_frames)
@@ -230,28 +197,28 @@ class Synthesizer:
     
     def synthesize_to_bytes(self, text: str) -> bytes:
         """Synthesize speech and return as WAV bytes."""
-        audio, sr = self.synthesize(text)
-        
-        if len(audio) == 0:
+        if not text or not text.strip():
             return b""
-        
-        audio_int16 = (audio * 32767).astype(np.int16)
-        
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            temp_path = f.name
+            
+        self._ensure_voice_loaded()
         
         try:
-            with wave.open(temp_path, "wb") as wav:
-                wav.setnchannels(1)
-                wav.setsampwidth(2)
-                wav.setframerate(sr)
-                wav.writeframes(audio_int16.tobytes())
+            from piper import SynthesisConfig
             
-            with open(temp_path, "rb") as f:
-                return f.read()
-        finally:
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+            syn_config = SynthesisConfig(
+                length_scale=self.length_scale,
+            )
+            
+            with io.BytesIO() as wav_buffer:
+                with wave.open(wav_buffer, "wb") as wav_file:
+                    self._piper_voice.synthesize_wav(text, wav_file, syn_config=syn_config)
+                return wav_buffer.getvalue()
+                
+        except ImportError:
+            with io.BytesIO() as wav_buffer:
+                with wave.open(wav_buffer, "wb") as wav_file:
+                    self._piper_voice.synthesize_wav(text, wav_file)
+                return wav_buffer.getvalue()
 
 
 class MockSynthesizer:
@@ -271,27 +238,19 @@ class MockSynthesizer:
         audio, sr = self.synthesize(text)
         audio_int16 = (audio * 32767).astype(np.int16)
         
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            temp_path = f.name
-        
-        try:
-            with wave.open(temp_path, "wb") as wav:
+        with io.BytesIO() as wav_buffer:
+            with wave.open(wav_buffer, "wb") as wav:
                 wav.setnchannels(1)
                 wav.setsampwidth(2)
                 wav.setframerate(sr)
                 wav.writeframes(audio_int16.tobytes())
-            
-            with open(temp_path, "rb") as f:
-                return f.read()
-        finally:
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+            return wav_buffer.getvalue()
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
-    print("Testing Synthesizer...")
+    print("Testing Synthesizer with piper-tts Python API...")
     
     # Test downloading and synthesizing
     synth = Synthesizer()
@@ -314,3 +273,5 @@ if __name__ == "__main__":
         
     except Exception as e:
         print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()

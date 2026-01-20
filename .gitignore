@@ -5,6 +5,9 @@ __pycache__/
 .pytest_cache/
 .env
 
+# Old Piper binary (no longer used - now using piper-tts Python package)
+bin/piper/
+
 # NodeJS
 node_modules/
 dist/
