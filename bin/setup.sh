@@ -66,19 +66,49 @@ else
 fi
 
 echo "Downloading Piper TTS binary for $ARCH..."
-if [ ! -f "bin/piper/piper" ]; then
+
+# Check if existing piper binary has the wrong architecture
+NEED_DOWNLOAD=false
+if [ -f "bin/piper/piper" ]; then
+    PIPER_ARCH=$(file bin/piper/piper | grep -o 'x86_64\|arm64' | head -1)
+    if [ "$PIPER_ARCH" != "$ARCH" ]; then
+        echo "Existing Piper binary is for $PIPER_ARCH, but this machine is $ARCH. Re-downloading..."
+        rm -rf bin/piper
+        NEED_DOWNLOAD=true
+    else
+        echo "Piper binary already exists and matches architecture."
+    fi
+else
+    NEED_DOWNLOAD=true
+fi
+
+if [ "$NEED_DOWNLOAD" = true ]; then
     mkdir -p bin/piper_temp
     curl -L "$PIPER_URL" -o bin/piper_temp/piper.tar.gz
     tar -xzf bin/piper_temp/piper.tar.gz -C bin/
     rm -rf bin/piper_temp
     echo "Piper binary installed to bin/piper/"
-else
-    echo "Piper binary already exists."
 fi
 
 # Fix Piper's espeak-ng library dependency (required for macOS)
 echo "Setting up espeak-ng library for Piper..."
-if [ ! -f "bin/piper/libespeak-ng.1.dylib" ]; then
+
+# Check if library exists and has correct architecture
+NEED_LIB=false
+if [ -f "bin/piper/libespeak-ng.1.dylib" ]; then
+    LIB_ARCH=$(file bin/piper/libespeak-ng.1.dylib | grep -o 'x86_64\|arm64' | head -1)
+    if [ "$LIB_ARCH" != "$ARCH" ]; then
+        echo "Existing espeak-ng library is for $LIB_ARCH, but this machine is $ARCH. Re-copying..."
+        rm -f bin/piper/libespeak-ng.1.dylib
+        NEED_LIB=true
+    else
+        echo "espeak-ng library already exists and matches architecture."
+    fi
+else
+    NEED_LIB=true
+fi
+
+if [ "$NEED_LIB" = true ]; then
     # Install espeak-ng via Homebrew if not present
     if ! brew list espeak-ng &>/dev/null; then
         echo "Installing espeak-ng via Homebrew..."
