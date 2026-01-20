@@ -147,14 +147,23 @@ class Synthesizer:
                 env["DYLD_LIBRARY_PATH"] = f"{piper_dir}:{env['DYLD_LIBRARY_PATH']}"
             else:
                 env["DYLD_LIBRARY_PATH"] = piper_dir
+            
+            # Build the command - use arch -x86_64 on macOS ARM64 because
+            # the official Piper "aarch64" release actually contains x86_64 binaries
+            import platform
+            cmd = [
+                piper_path,
+                "--model", str(model_path),
+                "--output_file", temp_path,
+                "--length_scale", str(self.length_scale),
+            ]
+            
+            # On macOS ARM64, run via Rosetta 2
+            if platform.system() == "Darwin" and platform.machine() == "arm64":
+                cmd = ["arch", "-x86_64"] + cmd
                 
             process = subprocess.run(
-                [
-                    piper_path,
-                    "--model", str(model_path),
-                    "--output_file", temp_path,
-                    "--length_scale", str(self.length_scale),
-                ],
+                cmd,
                 input=text.encode("utf-8"),
                 capture_output=True,
                 env=env,
