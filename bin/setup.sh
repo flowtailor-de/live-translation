@@ -61,6 +61,38 @@ else
     echo "Piper binary already exists."
 fi
 
+# Fix Piper's espeak-ng library dependency (required for macOS)
+echo "Setting up espeak-ng library for Piper..."
+if [ ! -f "bin/piper/libespeak-ng.1.dylib" ]; then
+    # Install espeak-ng via Homebrew if not present
+    if ! brew list espeak-ng &>/dev/null; then
+        echo "Installing espeak-ng via Homebrew..."
+        brew install espeak-ng
+    fi
+    
+    # Find and copy the espeak-ng library
+    ESPEAK_LIB=""
+    if [ -f "/opt/homebrew/lib/libespeak-ng.1.dylib" ]; then
+        ESPEAK_LIB="/opt/homebrew/lib/libespeak-ng.1.dylib"
+    elif [ -f "/usr/local/lib/libespeak-ng.1.dylib" ]; then
+        ESPEAK_LIB="/usr/local/lib/libespeak-ng.1.dylib"
+    fi
+    
+    if [ -n "$ESPEAK_LIB" ]; then
+        cp "$ESPEAK_LIB" bin/piper/
+        echo "Copied espeak-ng library to bin/piper/"
+    else
+        echo -e "${RED}Warning: Could not find libespeak-ng.1.dylib${NC}"
+    fi
+fi
+
+# Fix the library path in piper binary to use @executable_path
+if [ -f "bin/piper/piper" ] && [ -f "bin/piper/libespeak-ng.1.dylib" ]; then
+    echo "Fixing Piper library paths..."
+    install_name_tool -change @rpath/libespeak-ng.1.dylib @executable_path/libespeak-ng.1.dylib bin/piper/piper 2>/dev/null || true
+    echo "✅ Piper library paths fixed"
+fi
+
 echo "Downloading AI models (this may take a while)..."
 python -m src.download_models
 
