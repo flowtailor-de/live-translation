@@ -50,10 +50,25 @@ pip install -r requirements.txt
 
 
 
-echo "Downloading Piper TTS binary (Apple Silicon)..."
+# Detect CPU architecture
+ARCH=$(uname -m)
+echo "Detected architecture: $ARCH"
+
+if [ "$ARCH" = "arm64" ]; then
+    PIPER_URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_macos_aarch64.tar.gz"
+    HOMEBREW_LIB="/opt/homebrew/lib"
+elif [ "$ARCH" = "x86_64" ]; then
+    PIPER_URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_macos_x64.tar.gz"
+    HOMEBREW_LIB="/usr/local/lib"
+else
+    echo -e "${RED}Error: Unsupported architecture: $ARCH${NC}"
+    exit 1
+fi
+
+echo "Downloading Piper TTS binary for $ARCH..."
 if [ ! -f "bin/piper/piper" ]; then
     mkdir -p bin/piper_temp
-    curl -L "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_macos_aarch64.tar.gz" -o bin/piper_temp/piper.tar.gz
+    curl -L "$PIPER_URL" -o bin/piper_temp/piper.tar.gz
     tar -xzf bin/piper_temp/piper.tar.gz -C bin/
     rm -rf bin/piper_temp
     echo "Piper binary installed to bin/piper/"
@@ -70,9 +85,11 @@ if [ ! -f "bin/piper/libespeak-ng.1.dylib" ]; then
         brew install espeak-ng
     fi
     
-    # Find and copy the espeak-ng library
+    # Find and copy the espeak-ng library (architecture-appropriate path)
     ESPEAK_LIB=""
-    if [ -f "/opt/homebrew/lib/libespeak-ng.1.dylib" ]; then
+    if [ -f "$HOMEBREW_LIB/libespeak-ng.1.dylib" ]; then
+        ESPEAK_LIB="$HOMEBREW_LIB/libespeak-ng.1.dylib"
+    elif [ -f "/opt/homebrew/lib/libespeak-ng.1.dylib" ]; then
         ESPEAK_LIB="/opt/homebrew/lib/libespeak-ng.1.dylib"
     elif [ -f "/usr/local/lib/libespeak-ng.1.dylib" ]; then
         ESPEAK_LIB="/usr/local/lib/libespeak-ng.1.dylib"
