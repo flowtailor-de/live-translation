@@ -88,12 +88,6 @@ else
     echo -e "${RED}Warning: Unknown architecture: $ARCH${NC}"
 fi
 
-# Clean up old piper binary if it exists (no longer needed with piper-tts Python package)
-if [ -d "bin/piper" ]; then
-    echo "Removing old Piper binary (now using piper-tts Python package)..."
-    rm -rf bin/piper
-fi
-
 echo "Downloading AI models (this may take a while)..."
 python -m src.download_models
 
