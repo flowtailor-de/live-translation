@@ -14,7 +14,10 @@ scipy>=1.11.0
 # Voice activity detection
 # silero-vad (loaded via torch.hub)
 
-# Text-to-speech (new piper1-gpl with embedded espeak-ng, native Apple Silicon support)
+# Text-to-speech
+# NOTE: piper-tts requires onnxruntime which needs Python 3.10-3.12
+# If using Python 3.13+, you may need to downgrade Python or use pyenv
+onnxruntime>=1.16.0
 piper-tts>=1.2.0
 
 # Web server

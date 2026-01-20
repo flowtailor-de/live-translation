@@ -33,11 +33,40 @@ install_if_missing() {
 install_if_missing "python3" "python"
 install_if_missing "npm" "node"
 
+# Check Python version - piper-tts requires Python 3.10-3.12
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
+PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
+
+echo "Python version: $PYTHON_VERSION"
+
+if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 13 ]; then
+    echo -e "${BLUE}⚠️  Python $PYTHON_VERSION detected. piper-tts works best with Python 3.10-3.12${NC}"
+    
+    # Check if python3.12 or python3.11 is available
+    if command -v python3.12 &> /dev/null; then
+        echo -e "${GREEN}Found python3.12, using it instead...${NC}"
+        PYTHON_CMD="python3.12"
+    elif command -v python3.11 &> /dev/null; then
+        echo -e "${GREEN}Found python3.11, using it instead...${NC}"
+        PYTHON_CMD="python3.11"
+    elif command -v python3.10 &> /dev/null; then
+        echo -e "${GREEN}Found python3.10, using it instead...${NC}"
+        PYTHON_CMD="python3.10"
+    else
+        echo -e "${BLUE}Installing Python 3.12 via Homebrew...${NC}"
+        brew install python@3.12
+        PYTHON_CMD="/opt/homebrew/opt/python@3.12/bin/python3.12"
+    fi
+else
+    PYTHON_CMD="python3"
+fi
+
 # 2. Backend Setup
 echo -e "\n${BLUE}2. Setting up Python Backend...${NC}"
 if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv venv
+    echo "Creating virtual environment with $PYTHON_CMD..."
+    $PYTHON_CMD -m venv venv
 fi
 
 echo "Activating virtual environment..."
