@@ -54,6 +54,38 @@ def download_silero_vad():
     logger.info("Silero VAD downloaded")
 
 
+def download_translategemma(model_name: str = "google/translategemma-4b-it"):
+    """
+    Download TranslateGemma model (PyTorch version).
+    """
+    logger.info(f"Downloading TranslateGemma model: {model_name}...")
+    logger.info("Note: This requires HuggingFace login and Gemma license acceptance.")
+    
+    from transformers import AutoProcessor, AutoModelForImageTextToText
+    
+    try:
+        AutoProcessor.from_pretrained(model_name)
+        AutoModelForImageTextToText.from_pretrained(model_name)
+        logger.info("TranslateGemma model downloaded successfully")
+    except Exception as e:
+        if "401" in str(e) or "403" in str(e) or "gated" in str(e).lower():
+            logger.error("Authentication error. Please run: huggingface-cli login")
+        else:
+            logger.error(f"Failed to download TranslateGemma: {e}")
+
+def download_translategemma_mlx(model_name: str = "mlx-community/translategemma-4b-it-4bit"):
+    """
+    Download TranslateGemma MLX model (Quantized).
+    """
+    logger.info(f"Downloading TranslateGemma MLX model: {model_name}...")
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(repo_id=model_name)
+        logger.info("TranslateGemma MLX model downloaded successfully.")
+    except Exception as e:
+        logger.error(f"Error downloading MLX model: {e}")
+
+
 def download_piper_voice(voice: str = "fa_IR-amir-medium"):
     """Download Piper voice model."""
     logger.info(f"Downloading Piper voice: {voice}...")
@@ -98,21 +130,23 @@ def main():
     print("=" * 60)
     print("Live Translation System - Model Downloader")
     print("=" * 60)
-    print("\nThis will download approximately 4-5 GB of model files.")
-    print("Models will be cached for offline use.\n")
+    print("\nThis will download required models for offline use.\n")
     
     try:
         # 1. Whisper
         download_whisper("medium")
         
-        # 2. NLLB
-        download_nllb()
+        # 2. TranslateGemma MLX (Primary)
+        download_translategemma_mlx()
         
         # 3. Silero VAD
         download_silero_vad()
         
         # 4. Piper TTS
         download_piper_voice()
+        
+        # 5. NLLB (Optional backup)
+        # download_nllb()
         
         print("\n" + "=" * 60)
         print("All models downloaded successfully!")

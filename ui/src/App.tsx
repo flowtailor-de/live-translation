@@ -60,7 +60,7 @@ function App() {
           <h3>Latest Translations</h3>
           <div className="transcript-list">
             {transcript.length === 0 ? (
-              <p className="empty-text">Waiting for speech...</p>
+              <p className="empty-text">Waiting for speech... (Status: {status})</p>
             ) : (
               transcript.map((item, idx) => (
                 <div key={idx} className="transcript-item">

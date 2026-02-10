@@ -7,6 +7,7 @@ directly and works natively on Apple Silicon.
 """
 
 import numpy as np
+import threading
 import tempfile
 import wave
 import os
@@ -58,33 +59,37 @@ class Synthesizer:
         
         self._piper_voice = None
         self._model_path: Optional[Path] = None
+        self._load_lock = threading.Lock()
         
         logger.info(f"Synthesizer initialized with voice: {voice}")
     
     def _ensure_voice_loaded(self):
         """Ensure the Piper voice is loaded."""
-        if self._piper_voice is not None:
-            return
+        with self._load_lock:
+            if self._piper_voice is not None:
+                return
+                
+            try:
+                from piper import PiperVoice
+            except ImportError:
+                raise ImportError(
+                    "piper-tts package not found. Install with: pip install piper-tts"
+                )
             
-        try:
-            from piper import PiperVoice
-        except ImportError:
-            raise ImportError(
-                "piper-tts package not found. Install with: pip install piper-tts"
-            )
-        
-        # Check if model exists in cache
-        cache_dir = get_piper_cache_dir()
-        model_path = cache_dir / f"{self.voice}.onnx"
-        
-        if not model_path.exists():
-            logger.info(f"Downloading voice model: {self.voice}")
-            self._download_voice(self.voice)
-        
-        self._model_path = model_path
-        logger.info(f"Loading Piper voice from: {model_path}")
-        self._piper_voice = PiperVoice.load(str(model_path))
-        logger.info("Piper voice loaded successfully")
+            # Check if model exists in cache
+            cache_dir = get_piper_cache_dir()
+            model_path = cache_dir / f"{self.voice}.onnx"
+            config_path = cache_dir / f"{self.voice}.onnx.json"
+            
+            # Must check for BOTH files to avoid race conditions with partial downloads
+            if not model_path.exists() or not config_path.exists():
+                logger.info(f"Downloading voice model: {self.voice}")
+                self._download_voice(self.voice)
+            
+            self._model_path = model_path
+            logger.info(f"Loading Piper voice from: {model_path}")
+            self._piper_voice = PiperVoice.load(str(model_path))
+            logger.info("Piper voice loaded successfully")
     
     def _download_voice(self, voice_name: str):
         """Download a voice model using piper's download utility."""
@@ -94,8 +99,9 @@ class Synthesizer:
         
         # Try using piper.download_voices module
         try:
+            # Use --download-dir instead of -d
             result = subprocess.run(
-                ["python3", "-m", "piper.download_voices", voice_name, "-d", str(cache_dir)],
+                ["python3", "-m", "piper.download_voices", voice_name, "--download-dir", str(cache_dir)],
                 capture_output=True,
                 text=True,
             )
@@ -110,28 +116,41 @@ class Synthesizer:
         # Fallback: download directly from HuggingFace
         import urllib.request
         
-        base_url = "https://huggingface.co/rhasspy/piper-voices/resolve/main/fa/fa_IR"
+        # Approximate URL structure for piper-voices: fa/fa_IR/amir/medium/fa_IR-amir-medium.onnx
+        # But it varies. The surest way is using the python module. 
+        # If that fails, we can try to construct it, but it's brittle.
+        # Example: en_US-lessac-medium -> en/en_US/lessac/medium/en_US-lessac-medium.onnx
         
-        # Parse voice name to get path components
-        # e.g., "fa_IR-amir-medium" -> "amir/medium"
         parts = voice_name.split("-")
+        # e.g., "fa_IR-amir-medium" -> lang="fa_IR", speaker="amir", quality="medium"
+        # e.g., "en_US-lessac-medium" -> lang="en_US", speaker="lessac", quality="medium"
+        
         if len(parts) >= 3:
+            lang_code = parts[0] # fa_IR or en_US
+            family = lang_code.split("_")[0] # fa or en
             speaker = parts[1]
             quality = parts[2]
             
-            onnx_url = f"{base_url}/{speaker}/{quality}/{voice_name}.onnx"
-            json_url = f"{base_url}/{speaker}/{quality}/{voice_name}.onnx.json"
+            base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{family}/{lang_code}/{speaker}/{quality}"
+            
+            onnx_url = f"{base_url}/{voice_name}.onnx"
+            json_url = f"{base_url}/{voice_name}.onnx.json"
             
             onnx_path = cache_dir / f"{voice_name}.onnx"
             json_path = cache_dir / f"{voice_name}.onnx.json"
             
             logger.info(f"Downloading ONNX model from: {onnx_url}")
-            urllib.request.urlretrieve(onnx_url, onnx_path)
-            
-            logger.info(f"Downloading config from: {json_url}")
-            urllib.request.urlretrieve(json_url, json_path)
-            
-            logger.info(f"Downloaded voice: {voice_name}")
+            try:
+                urllib.request.urlretrieve(onnx_url, onnx_path)
+                logger.info(f"Downloading config from: {json_url}")
+                urllib.request.urlretrieve(json_url, json_path)
+                logger.info(f"Downloaded voice: {voice_name}")
+            except Exception as e:
+                logger.error(f"Fallback download failed: {e}")
+                # Clean up partial downloads
+                if onnx_path.exists(): onnx_path.unlink()
+                if json_path.exists(): json_path.unlink()
+                raise e
         else:
             raise ValueError(f"Cannot parse voice name: {voice_name}")
     

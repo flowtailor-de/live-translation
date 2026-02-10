@@ -64,6 +64,23 @@ fi
 
 # 2. Backend Setup
 echo -e "\n${BLUE}2. Setting up Python Backend...${NC}"
+
+# Check if existing venv has compatible Python version
+RECREATE_VENV=false
+if [ -d "venv" ]; then
+    VENV_PYTHON_VERSION=$(./venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
+    VENV_PYTHON_MINOR=$(echo $VENV_PYTHON_VERSION | cut -d. -f2)
+    
+    if [ "$VENV_PYTHON_MINOR" -ge 13 ] 2>/dev/null; then
+        echo -e "${BLUE}Existing venv uses Python $VENV_PYTHON_VERSION (incompatible with piper-tts)${NC}"
+        echo -e "${BLUE}Recreating venv with $PYTHON_CMD...${NC}"
+        rm -rf venv
+        RECREATE_VENV=true
+    else
+        echo "Existing venv uses Python $VENV_PYTHON_VERSION ✅"
+    fi
+fi
+
 if [ ! -d "venv" ]; then
     echo "Creating virtual environment with $PYTHON_CMD..."
     $PYTHON_CMD -m venv venv
@@ -99,4 +116,10 @@ npm install
 cd ..
 
 echo -e "\n${GREEN}✅ Setup complete!${NC}"
+echo -e ""
+echo -e "${BLUE}📋 Configuration Notes:${NC}"
+echo -e "   • Audio input channel can be configured in config.yaml"
+echo -e "   • For Behringer X-USB: input_channel: 8 = Main Mic"
+echo -e "   • Available channels: 1-32"
+echo -e ""
 echo -e "You can now run the system using: ${GREEN}./bin/start.sh${NC}"

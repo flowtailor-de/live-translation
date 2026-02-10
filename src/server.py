@@ -5,8 +5,9 @@ Web server for streaming translated audio to clients.
 import asyncio
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from typing import List, Optional
 import wave
 import io
@@ -16,6 +17,15 @@ import os
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Live Translation Server")
+
+# Enable CORS for development/LAN access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=False, # Disable credentials to avoid strict browser checks with wildcard origin
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Mount web directory
 web_dir = os.path.join(os.path.dirname(__file__), "..", "web")
@@ -132,27 +142,50 @@ async def serve_static(file_path: str):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for audio streaming."""
-    await manager.connect(websocket)
+    logger.info(f"New WebSocket connection request from {websocket.client}")
+    try:
+        await manager.connect(websocket)
+        logger.info("WebSocket accepted and manager connected")
+    except Exception as e:
+        logger.error(f"Failed to accept WebSocket: {e}")
+        return
     
     try:
         while True:
-            # Keep connection alive, receive any client messages
+            # Low-level receive to see exactly what's happening
             try:
-                data = await asyncio.wait_for(
-                    websocket.receive_text(),
-                    timeout=30.0
-                )
-                # Handle ping/pong or other messages
-                if data == "ping":
-                    await websocket.send_text("pong")
+                # message = await asyncio.wait_for(
+                #     websocket.receive(),
+                #     timeout=30.0
+                # )
+                message = await websocket.receive()
+                
+                msg_type = message["type"]
+                logger.info(f"Received raw message type: {msg_type}")
+
+                if msg_type == "websocket.receive":
+                    if "text" in message:
+                        data = message["text"]
+                        logger.info(f"Received text: {data}")
+                        if data == "ping":
+                            await websocket.send_text("pong")
+                    elif "bytes" in message:
+                        logger.info(f"Received {len(message['bytes'])} bytes")
+                elif msg_type == "websocket.disconnect":
+                    code = message.get("code", 1000)
+                    logger.info(f"Client sent disconnect frame. Code: {code}")
+                    break
+                    
             except asyncio.TimeoutError:
                 # Send keepalive
-                await websocket.send_text('{"type": "keepalive"}')
+                # await websocket.send_text('{"type": "keepalive"}')
+                pass
             
-    except WebSocketDisconnect:
+    except WebSocketDisconnect as e:
+        logger.info(f"WebSocket disconnected (exc). Code: {e.code}, Reason: {e.reason}")
         manager.disconnect(websocket)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error in loop: {e}", exc_info=True)
         manager.disconnect(websocket)
 
 

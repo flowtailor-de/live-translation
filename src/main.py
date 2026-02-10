@@ -8,6 +8,10 @@ import logging
 import argparse
 import sys
 from pathlib import Path
+import warnings
+
+# Suppress benign warning from multiprocessing.resource_tracker on shutdown
+warnings.filterwarnings("ignore", category=UserWarning, module="multiprocessing.resource_tracker")
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -15,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.audio_capture import AudioCapture
 from src.vad import VoiceActivityDetector, SimpleVAD
 from src.transcriber import Transcriber
-from src.translator import Translator
+from src.translator import create_translator
 from src.synthesizer import Synthesizer, MockSynthesizer
 from src.server import create_app, broadcast_result
 
@@ -42,7 +46,6 @@ def create_components(config: dict):
     """Create all pipeline components from config."""
     
     # Audio capture
-    # Audio capture
     audio_config = config.get("audio", {})
     if audio_config.get('input_file'):
         logger.info(f"Using file input: {audio_config['input_file']}")
@@ -61,17 +64,21 @@ def create_components(config: dict):
             sample_rate=audio_config.get("sample_rate", 16000),
             channels=audio_config.get("channels", 1),
             chunk_duration=audio_config.get("chunk_duration", 0.1),
+            input_channel=audio_config.get("input_channel"),
         )
     
-    # Voice Activity Detection
+    # Voice Activity Detection with sentence-level chunking
     vad_config = config.get("vad", {})
     try:
         vad = VoiceActivityDetector(
             threshold=vad_config.get("threshold", 0.5),
             min_speech_duration=vad_config.get("min_speech_duration", 0.3),
-            min_silence_duration=vad_config.get("min_silence_duration", 0.4),
-            max_speech_duration=vad_config.get("max_speech_duration", 5.0),
+            min_silence_duration=vad_config.get("min_silence_duration", 0.4),  # Legacy
+            max_speech_duration=vad_config.get("max_speech_duration", 15.0),
             speech_pad_duration=vad_config.get("speech_pad_duration", 0.2),
+            # Two-tier sentence detection
+            word_silence_duration=vad_config.get("word_silence_duration"),  # None = use min_silence
+            sentence_silence_duration=vad_config.get("sentence_silence_duration", 1.0),
         )
     except Exception as e:
         logger.warning(f"Could not load Silero VAD: {e}, using simple VAD")
@@ -79,7 +86,7 @@ def create_components(config: dict):
             energy_threshold=0.01,
             min_speech_duration=vad_config.get("min_speech_duration", 0.3),
             min_silence_duration=vad_config.get("min_silence_duration", 0.4),
-            max_speech_duration=vad_config.get("max_speech_duration", 5.0),
+            max_speech_duration=vad_config.get("max_speech_duration", 15.0),
         )
     
     # Transcriber (Whisper)
@@ -91,15 +98,42 @@ def create_components(config: dict):
         language=stt_config.get("language", "de"),
     )
     
-    # Translator (NLLB)
+    # Translator (NLLB or TranslateGemma)
     trans_config = config.get("translation", {})
-    translator = Translator(
-        model_name=trans_config.get("model", "facebook/nllb-200-distilled-600M"),
-        source_lang=trans_config.get("source_lang", "deu_Latn"),
-        target_lang=trans_config.get("target_lang", "pes_Arab"),
-        device=trans_config.get("device", "auto"),
-        max_length=trans_config.get("max_length", 512),
-    )
+    backend = trans_config.get("backend", "nllb")
+    
+    if backend == "translategemma-mlx":
+        tg_config = trans_config.get("translategemma-mlx", {})
+        translator = create_translator(
+            backend="translategemma-mlx",
+            model_name=tg_config.get("model", "mlx-community/translategemma-4b-it-4bit"),
+            source_lang=trans_config.get("source_lang", "de"),
+            target_lang=trans_config.get("target_lang", "fa"),
+            max_new_tokens=tg_config.get("max_new_tokens", 256),
+        )
+        logger.info(f"Using TranslateGemma MLX backend: {tg_config.get('model')}")
+    elif backend == "translategemma":
+        tg_config = trans_config.get("translategemma", {})
+        translator = create_translator(
+            backend="translategemma",
+            model_name=tg_config.get("model", "google/translategemma-12b-it"),
+            source_lang=trans_config.get("source_lang", "de"),
+            target_lang=trans_config.get("target_lang", "fa"),
+            device=trans_config.get("device", "mps"),
+            max_new_tokens=tg_config.get("max_new_tokens", 256),
+        )
+        logger.info(f"Using TranslateGemma backend: {tg_config.get('model', 'google/translategemma-12b-it')}")
+    else:
+        nllb_config = trans_config.get("nllb", {})
+        translator = create_translator(
+            backend="nllb",
+            model_name=nllb_config.get("model", "facebook/nllb-200-distilled-600M"),
+            source_lang=trans_config.get("source_lang", "de"),
+            target_lang=trans_config.get("target_lang", "fa"),
+            device=trans_config.get("device", "mps"),
+            max_length=nllb_config.get("max_length", 512),
+        )
+        logger.info(f"Using NLLB backend: {nllb_config.get('model', 'facebook/nllb-200-distilled-600M')}")
     
     # Synthesizer (Piper)
     tts_config = config.get("tts", {})

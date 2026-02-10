@@ -22,6 +22,7 @@ class AudioCapture:
         sample_rate: int = 16000,
         channels: int = 1,
         chunk_duration: float = 0.1,
+        input_channel: Optional[int] = None,
     ):
         """
         Initialize audio capture.
@@ -29,14 +30,17 @@ class AudioCapture:
         Args:
             device_name: Partial name of the audio device to use
             sample_rate: Sample rate in Hz (16000 recommended for Whisper)
-            channels: Number of audio channels (1 for mono)
+            channels: Number of audio channels (1 for mono output)
             chunk_duration: Duration of each audio chunk in seconds
+            input_channel: Specific input channel to capture from (1-indexed, e.g., 8 for X-USB channel 8).
+                          If None, captures from channel 1. For X32 X-USB card, channels 1-32 are available.
         """
         self.device_name = device_name
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_duration = chunk_duration
         self.chunk_size = int(sample_rate * chunk_duration)
+        self.input_channel = input_channel  # 1-indexed channel number
         
         self.device_id: Optional[int] = None
         self.stream: Optional[sd.InputStream] = None
@@ -77,8 +81,16 @@ class AudioCapture:
         if status:
             logger.warning(f"Audio callback status: {status}")
         
-        # Convert to float32 and put in queue
-        audio_data = indata.copy().flatten().astype(np.float32)
+        # If input_channel is specified, extract only that channel
+        # indata shape is (frames, channels), channels are 0-indexed
+        if self.input_channel is not None:
+            # Extract specific channel (convert 1-indexed to 0-indexed)
+            channel_idx = self.input_channel - 1
+            audio_data = indata[:, channel_idx].copy().astype(np.float32)
+        else:
+            # Default: flatten all channels (mono input)
+            audio_data = indata.copy().flatten().astype(np.float32)
+        
         self.audio_queue.put(audio_data)
     
     def start(self) -> None:
@@ -86,11 +98,21 @@ class AudioCapture:
         if self.is_running:
             return
         
-        logger.info(f"Starting audio capture (device={self.device_id}, rate={self.sample_rate}Hz)")
+        # Determine how many channels to capture
+        # If input_channel is specified, we need to capture at least that many channels
+        # then extract just the one we want in the callback
+        if self.input_channel is not None:
+            # Capture enough channels to include the one we want (1-indexed)
+            capture_channels = self.input_channel
+            logger.info(f"Will capture {capture_channels} channels, extracting channel {self.input_channel}")
+        else:
+            capture_channels = self.channels
+        
+        logger.info(f"Starting audio capture (device={self.device_id}, rate={self.sample_rate}Hz, input_channel={self.input_channel or 1})")
         
         self.stream = sd.InputStream(
             device=self.device_id,
-            channels=self.channels,
+            channels=capture_channels,
             samplerate=self.sample_rate,
             blocksize=self.chunk_size,
             dtype=np.float32,

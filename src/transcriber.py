@@ -2,7 +2,7 @@
 Speech-to-Text module using MLX-Whisper (Apple Silicon GPU).
 Transcribes German speech to text.
 
-NOTE: MLX is not thread-safe, so we use a Lock to serialize transcription calls.
+NOTE: MLX is not thread-safe, so we use a shared Lock to serialize all MLX calls.
 """
 
 import numpy as np
@@ -10,10 +10,9 @@ import threading
 from typing import Tuple
 import logging
 
-logger = logging.getLogger(__name__)
+from src.mlx_lock import mlx_lock as _mlx_lock
 
-# Global lock for MLX transcription (MLX is not thread-safe)
-_mlx_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 class Transcriber:

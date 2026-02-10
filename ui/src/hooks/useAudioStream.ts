@@ -25,14 +25,28 @@ export function useAudioStream(): AudioStreamState {
     const audioCtxRef = useRef<AudioContext | null>(null);
     const nextStartTimeRef = useRef<number>(0);
 
-    // Initialize AudioContext
-    const initAudio = useCallback(() => {
-        if (!audioCtxRef.current) {
-            const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-            audioCtxRef.current = new AudioContext();
-        }
-        if (audioCtxRef.current.state === 'suspended') {
-            audioCtxRef.current.resume();
+    // Initialize AudioContext safely and unlock for iOS
+    const initAudio = useCallback(async () => {
+        try {
+            if (!audioCtxRef.current) {
+                const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+                audioCtxRef.current = new AudioContext();
+            }
+
+            // Unlock audio on iOS by playing a short silent buffer
+            if (audioCtxRef.current) {
+                const buffer = audioCtxRef.current.createBuffer(1, 1, 22050);
+                const source = audioCtxRef.current.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioCtxRef.current.destination);
+                source.start(0);
+
+                if (audioCtxRef.current.state === 'suspended') {
+                    await audioCtxRef.current.resume();
+                }
+            }
+        } catch (e) {
+            console.error('Audio Init Error:', e);
         }
     }, []);
 
@@ -46,31 +60,58 @@ export function useAudioStream(): AudioStreamState {
             source.connect(audioCtxRef.current.destination);
 
             const currentTime = audioCtxRef.current.currentTime;
-            // Simple scheduling to prevent overlap/gaps
-            // If next start time is in the past, reset to current time
             const startTime = Math.max(currentTime, nextStartTimeRef.current);
-
             source.start(startTime);
             nextStartTimeRef.current = startTime + audioBuffer.duration;
         } catch (err) {
-            console.error('Error decoding audio:', err);
+            // console.error('Error decoding audio:', err); 
+            // Silent for now to avoid spam
         }
     }, []);
 
-    const connect = useCallback(() => {
-        initAudio();
+    const connect = useCallback(async () => {
+        addLog('Connect called');
+
+        // Initialize AudioContext immediately on user gesture (click)
+        try {
+            await initAudio();
+        } catch (e) {
+            addLog(`Audio init error: ${e}`);
+        }
+
         setStatus('connecting');
 
+        // Connect via Vite Proxy (same host/port as UI)
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        // For development, fallback to localhost:8000 if running on port 5173
-        const host = window.location.port === '5173' ? 'localhost:8000' : window.location.host;
+        const host = window.location.host; // e.g., 192.168.1.x:5173
         const wsUrl = `${protocol}//${host}/ws`;
 
-        const ws = new WebSocket(wsUrl);
-        ws.binaryType = 'arraybuffer';
+        addLog(`Attempting WS: ${wsUrl}`);
+
+        let ws: WebSocket;
+        try {
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer'; // Set binary type immediately
+            addLog('WebSocket instance created');
+        } catch (e) {
+            addLog(`WS Creation Error: ${e}`);
+            alert(`WS Creation Error: ${e}`);
+            setStatus('error');
+            return;
+        }
 
         ws.onopen = () => {
+            addLog('WS Open event fired!');
+            // alert('WS OPENED!'); // Uncomment if needed
             setStatus('connected');
+
+            // Send a ping message immediately to start traffic
+            try {
+                ws.send('ping');
+                addLog('Ping sent');
+            } catch (e) {
+                addLog(`Ping error: ${e}`);
+            }
         };
 
         ws.onmessage = async (event) => {
@@ -82,28 +123,31 @@ export function useAudioStream(): AudioStreamState {
                             original: msg.original,
                             translated: msg.translated,
                             latency: msg.latency
-                        }, ...prev].slice(0, 50)); // Keep last 50 items
+                        }, ...prev].slice(0, 50));
                         setLatency(msg.latency);
                     }
-                } catch (e) {
-                    // Ignore parse errors for non-JSON messages
-                }
+                } catch (e) { }
             } else if (event.data instanceof ArrayBuffer) {
                 await playAudioChunk(event.data);
             }
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
+            addLog(`WS Closed: ${event.code} ${event.reason}`);
+            // alert(`WS CLOSED: ${event.code} ${event.reason}`);
             setStatus('disconnected');
             wsRef.current = null;
         };
 
-        ws.onerror = () => {
+        ws.onerror = (error) => {
+            console.error('WebSocket Error:', error);
+            addLog('WS Error occurred');
+            // alert('WS ERROR!');
             setStatus('error');
         };
 
         wsRef.current = ws;
-    }, [initAudio, playAudioChunk]);
+    }, [initAudio, playAudioChunk, addLog]);
 
     const disconnect = useCallback(() => {
         if (wsRef.current) {
@@ -111,9 +155,11 @@ export function useAudioStream(): AudioStreamState {
             wsRef.current = null;
         }
         setStatus('disconnected');
-        // Close audio context to stop playing
+
         if (audioCtxRef.current) {
-            audioCtxRef.current.close();
+            // Don't close context, just suspend to allow reuse? 
+            // Better to close for full reset
+            audioCtxRef.current.close().catch(e => console.error(e));
             audioCtxRef.current = null;
         }
         nextStartTimeRef.current = 0;
@@ -126,8 +172,26 @@ export function useAudioStream(): AudioStreamState {
                 wsRef.current.close();
             }
             if (audioCtxRef.current) {
-                audioCtxRef.current.close();
+                audioCtxRef.current.close().catch(() => { });
             }
+        };
+    }, []);
+
+    // Global error handler for crashes
+    useEffect(() => {
+        const handleError = (event: ErrorEvent) => {
+            console.error('Global Error Event:', event);
+        };
+        const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+            console.error('Unhandled Rejection Event:', event);
+        };
+
+        window.addEventListener('error', handleError);
+        window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+        return () => {
+            window.removeEventListener('error', handleError);
+            window.removeEventListener('unhandledrejection', handleUnhandledRejection);
         };
     }, []);
 

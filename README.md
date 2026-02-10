@@ -34,7 +34,7 @@ graph LR
 ### core Components
 *   **Speech-to-Text**: [Whisper](https://github.com/openai/whisper) running on [MLX](https://github.com/ml-explore/mlx) for Apple Silicon acceleration.
 *   **Translation**: [NLLB-200](https://github.com/facebookresearch/fairseq/tree/nllb) (No Language Left Behind) via Hugging Face Transformers.
-*   **Text-to-Speech**: [Piper](https://github.com/rhasspy/piper) for fast, low-resource neural TTS.
+*   **Text-to-Speech**: [Piper](https://github.com/OHF-Voice/piper1-gpl) for fast, low-resource neural TTS.
 *   **Backend**: Python 3.10+ with FastAPI and AsyncIO.
 *   **Frontend**: React + Vite (TypeScript).
 

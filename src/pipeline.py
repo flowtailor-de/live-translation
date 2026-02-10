@@ -40,33 +40,70 @@ class SpeechChunk:
 
 
 class OrderedDeliveryQueue:
-    """Ensures results are delivered in chunk_id order."""
+    """Ensures results are delivered in chunk_id order with timeout for missing chunks."""
     
-    def __init__(self):
+    def __init__(self, skip_timeout: float = 10.0):
         self.pending: Dict[int, TranslationResult] = {}
         self.next_to_deliver = 1
         self.lock = threading.Lock()
+        self.skip_timeout = skip_timeout
+        self.waiting_since: Dict[int, float] = {}  # Track when we started waiting for each chunk
     
     def add_result(self, result: TranslationResult) -> list[TranslationResult]:
         """Add result and return any that are ready for delivery."""
         ready = []
+        now = time.time()
         with self.lock:
             self.pending[result.chunk_id] = result
+            
+            # Check if next_to_deliver is missing and we should skip it
+            while self.next_to_deliver not in self.pending:
+                # First time waiting for this chunk?
+                if self.next_to_deliver not in self.waiting_since:
+                    self.waiting_since[self.next_to_deliver] = now
+                    break  # Start waiting, don't skip yet
+                
+                # Have we been waiting too long?
+                wait_time = now - self.waiting_since[self.next_to_deliver]
+                if wait_time >= self.skip_timeout:
+                    skipped_id = self.next_to_deliver
+                    logger.warning(f"⚠️ Auto-skipping chunk {skipped_id} after {wait_time:.1f}s timeout")
+                    del self.waiting_since[skipped_id]
+                    self.next_to_deliver += 1
+                else:
+                    break  # Still within timeout, keep waiting
+            
+            # Deliver all consecutive ready chunks
             while self.next_to_deliver in self.pending:
-                ready.append(self.pending.pop(self.next_to_deliver))
+                delivered_id = self.next_to_deliver
+                ready.append(self.pending.pop(delivered_id))
+                # Clear any waiting tracking for this chunk
+                self.waiting_since.pop(delivered_id, None)
                 self.next_to_deliver += 1
+                
         return ready
     
     def skip_chunk(self, chunk_id: int) -> list[TranslationResult]:
         """Skip a chunk (empty result) and return any ready results."""
         ready = []
         with self.lock:
+            # Clear waiting tracking for this chunk
+            self.waiting_since.pop(chunk_id, None)
+            
+            # Skip if this is the one we're waiting for
             if chunk_id == self.next_to_deliver:
                 self.next_to_deliver += 1
-                # Check if any waiting chunks can now be delivered
-                while self.next_to_deliver in self.pending:
-                    ready.append(self.pending.pop(self.next_to_deliver))
-                    self.next_to_deliver += 1
+                logger.debug(f"Chunk {chunk_id}: Explicitly skipped")
+            # Also skip if it was already delivered (chunk came late)
+            elif chunk_id < self.next_to_deliver:
+                logger.debug(f"Chunk {chunk_id}: Already passed, ignoring skip")
+            
+            # Check if any waiting chunks can now be delivered
+            while self.next_to_deliver in self.pending:
+                delivered_id = self.next_to_deliver
+                ready.append(self.pending.pop(delivered_id))
+                self.waiting_since.pop(delivered_id, None)
+                self.next_to_deliver += 1
         return ready
     
     def get_status(self) -> dict:
