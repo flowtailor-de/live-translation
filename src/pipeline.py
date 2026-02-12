@@ -405,11 +405,17 @@ class ParallelTranslationPipeline:
             return None
     
     def get_stats(self) -> dict:
-        return {
+        stats = {
             **self.stats,
             "is_running": self.is_running,
             "delivery_buffer": self.delivery_queue.get_status()["buffered_count"],
         }
+        # Include language info from the translator
+        if hasattr(self.translator, 'source_lang'):
+            stats["source_lang"] = self.translator.source_lang
+        if hasattr(self.translator, 'target_lang'):
+            stats["target_lang"] = self.translator.target_lang
+        return stats
 
 
 # Alias

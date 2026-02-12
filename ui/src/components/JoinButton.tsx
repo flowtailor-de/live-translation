@@ -1,4 +1,3 @@
-import { Mic, Loader2, StopCircle } from 'lucide-react';
 import './JoinButton.css';
 
 interface JoinButtonProps {
@@ -7,48 +6,57 @@ interface JoinButtonProps {
 }
 
 export function JoinButton({ status, onClick }: JoinButtonProps) {
-    const getContent = () => {
+    const isActive = status === 'connected' || status === 'connecting';
+
+    const getLabel = () => {
         switch (status) {
             case 'connecting':
                 return (
-                    <>
-                        <Loader2 className="icon spin" size={32} />
-                        <span>Connecting...</span>
-                    </>
+                    <div className="stream-button__spinner animate-spin" />
                 );
             case 'connected':
                 return (
                     <>
-                        <StopCircle className="icon" size={32} />
-                        <span>Leave Stream</span>
+                        <span className="stream-button__label">leave.</span>
+                        <span className="stream-button__label">stream.</span>
                     </>
                 );
             case 'error':
                 return (
                     <>
-                        <Mic className="icon" size={32} />
-                        <span>Retry Connection</span>
+                        <span className="stream-button__label">retry.</span>
+                        <span className="stream-button__label">stream.</span>
                     </>
                 );
             default:
                 return (
                     <>
-                        <Mic className="icon" size={32} />
-                        <span>Join Stream</span>
+                        <span className="stream-button__label">join.</span>
+                        <span className="stream-button__label">stream.</span>
                     </>
                 );
         }
     };
 
     return (
-        <div className="button-container">
-            {status === 'connected' && <div className="pulse-ring" />}
+        <div className="stream-button-container">
+            {/* Pulse rings – always rendered, animated only when active */}
+            {isActive && (
+                <>
+                    <div className="pulse-ring pulse-ring--inner animate-pulse-ring" />
+                    <div
+                        className="pulse-ring pulse-ring--outer animate-pulse-ring"
+                        style={{ animationDelay: '1s' }}
+                    />
+                </>
+            )}
+
             <button
-                className={`join-button ${status}`}
+                className="stream-button"
                 onClick={onClick}
                 disabled={status === 'connecting'}
             >
-                {getContent()}
+                {getLabel()}
             </button>
         </div>
     );

@@ -8,10 +8,16 @@ interface TranscriptItem {
     latency: number;
 }
 
+interface LanguageInfo {
+    sourceLang: string;
+    targetLang: string;
+}
+
 interface AudioStreamState {
     status: ConnectionState;
     transcript: TranscriptItem[];
     latency: number;
+    languages: LanguageInfo;
     connect: () => void;
     disconnect: () => void;
 }
@@ -20,6 +26,7 @@ export function useAudioStream(): AudioStreamState {
     const [status, setStatus] = useState<ConnectionState>('disconnected');
     const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
     const [latency, setLatency] = useState(0);
+    const [languages, setLanguages] = useState<LanguageInfo>({ sourceLang: '—', targetLang: '—' });
 
     const wsRef = useRef<WebSocket | null>(null);
     const audioCtxRef = useRef<AudioContext | null>(null);
@@ -69,14 +76,40 @@ export function useAudioStream(): AudioStreamState {
         }
     }, []);
 
+    // Fetch language info from the backend status endpoint
+    const fetchLanguages = useCallback(async () => {
+        try {
+            const res = await fetch('/api/status');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.source_lang && data.target_lang) {
+                    setLanguages({
+                        sourceLang: data.source_lang.toUpperCase(),
+                        targetLang: data.target_lang.toUpperCase(),
+                    });
+                }
+            }
+        } catch (e) {
+            console.log('Could not fetch language info:', e);
+        }
+    }, []);
+
+    // Fetch languages on mount
+    useEffect(() => {
+        fetchLanguages();
+    }, [fetchLanguages]);
+
     const connect = useCallback(async () => {
-        addLog('Connect called');
+        console.log('Connect called');
+
+        // Refresh language info on connect
+        await fetchLanguages();
 
         // Initialize AudioContext immediately on user gesture (click)
         try {
             await initAudio();
         } catch (e) {
-            addLog(`Audio init error: ${e}`);
+            console.log(`Audio init error: ${e}`);
         }
 
         setStatus('connecting');
@@ -86,31 +119,30 @@ export function useAudioStream(): AudioStreamState {
         const host = window.location.host; // e.g., 192.168.1.x:5173
         const wsUrl = `${protocol}//${host}/ws`;
 
-        addLog(`Attempting WS: ${wsUrl}`);
+        console.log(`Attempting WS: ${wsUrl}`);
 
         let ws: WebSocket;
         try {
             ws = new WebSocket(wsUrl);
             ws.binaryType = 'arraybuffer'; // Set binary type immediately
-            addLog('WebSocket instance created');
+            console.log('WebSocket instance created');
         } catch (e) {
-            addLog(`WS Creation Error: ${e}`);
+            console.log(`WS Creation Error: ${e}`);
             alert(`WS Creation Error: ${e}`);
             setStatus('error');
             return;
         }
 
         ws.onopen = () => {
-            addLog('WS Open event fired!');
-            // alert('WS OPENED!'); // Uncomment if needed
+            console.log('WS Open event fired!');
             setStatus('connected');
 
             // Send a ping message immediately to start traffic
             try {
                 ws.send('ping');
-                addLog('Ping sent');
+                console.log('Ping sent');
             } catch (e) {
-                addLog(`Ping error: ${e}`);
+                console.log(`Ping error: ${e}`);
             }
         };
 
@@ -133,21 +165,19 @@ export function useAudioStream(): AudioStreamState {
         };
 
         ws.onclose = (event) => {
-            addLog(`WS Closed: ${event.code} ${event.reason}`);
-            // alert(`WS CLOSED: ${event.code} ${event.reason}`);
+            console.log(`WS Closed: ${event.code} ${event.reason}`);
             setStatus('disconnected');
             wsRef.current = null;
         };
 
         ws.onerror = (error) => {
             console.error('WebSocket Error:', error);
-            addLog('WS Error occurred');
-            // alert('WS ERROR!');
+            console.log('WS Error occurred');
             setStatus('error');
         };
 
         wsRef.current = ws;
-    }, [initAudio, playAudioChunk, addLog]);
+    }, [initAudio, playAudioChunk, fetchLanguages]);
 
     const disconnect = useCallback(() => {
         if (wsRef.current) {
@@ -195,5 +225,5 @@ export function useAudioStream(): AudioStreamState {
         };
     }, []);
 
-    return { status, transcript, latency, connect, disconnect };
+    return { status, transcript, latency, languages, connect, disconnect };
 }
