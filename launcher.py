@@ -149,7 +149,7 @@ class BackendLauncher(ctk.CTk):
         self.model_backend_var = ctk.StringVar(value=current_backend)
         self.model_backend_menu = ctk.CTkOptionMenu(
             self.settings_frame,
-            values=["nllb", "translategemma-mlx", "translategemma"],
+            values=["nllb", "translategemma-mlx", "translategemma", "gemini-live"],
             variable=self.model_backend_var
         )
         self.model_backend_menu.grid(row=0, column=3, padx=10, pady=10, sticky="ew")

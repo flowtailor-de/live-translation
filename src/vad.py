@@ -7,9 +7,120 @@ Forces maximum chunk duration for real-time translation.
 import numpy as np
 import torch
 from typing import Optional, List
+from collections import deque
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class SpeechGate:
+    """
+    Frame-level speech gate for *streaming* forwarding.
+
+    Unlike VoiceActivityDetector (which buffers and emits complete segments),
+    this passes audio through in near-real-time while speech is active and
+    suppresses sustained silence. It's used to avoid streaming silence to a
+    paid cloud API (e.g. Gemini Live Translate), where input is billed per
+    second of audio.
+
+    - **Pre-roll**: a short rolling buffer of recent audio is prepended at
+      speech onset so the first word isn't clipped.
+    - **Hangover**: forwarding continues for a short time after speech drops
+      below threshold, so trailing words and brief word-pauses aren't cut.
+      The trailing silence also lets the cloud VAD finalize the turn.
+    """
+
+    def __init__(
+        self,
+        threshold: float = 0.5,
+        sample_rate: int = 16000,
+        pre_roll_duration: float = 0.3,
+        hangover_duration: float = 0.8,
+    ):
+        self.threshold = threshold
+        self.sample_rate = sample_rate
+        self.pre_roll_samples = int(pre_roll_duration * sample_rate)
+        self.hangover_samples = int(hangover_duration * sample_rate)
+
+        logger.info("Loading Silero VAD model (speech gate)...")
+        self.model, _ = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=False,
+            trust_repo=True,
+        )
+        self.model.eval()
+
+        self.raw_buffer: np.ndarray = np.array([], dtype=np.float32)
+        self.preroll: deque = deque()
+        self.preroll_len = 0
+        self.is_speech = False
+        self.silence_run = 0
+        logger.info(
+            f"SpeechGate ready (threshold={threshold}, "
+            f"pre_roll={pre_roll_duration}s, hangover={hangover_duration}s)"
+        )
+
+    def reset(self) -> None:
+        self.raw_buffer = np.array([], dtype=np.float32)
+        self.preroll.clear()
+        self.preroll_len = 0
+        self.is_speech = False
+        self.silence_run = 0
+        self.model.reset_states()
+
+    def process(self, audio: np.ndarray) -> Optional[np.ndarray]:
+        """Return audio to forward now (possibly with pre-roll), or None to suppress."""
+        self.raw_buffer = np.concatenate([self.raw_buffer, audio])
+
+        vad_window = 512  # Silero requirement for 16kHz
+        out: List[np.ndarray] = []
+        while len(self.raw_buffer) >= vad_window:
+            window = self.raw_buffer[:vad_window]
+            self.raw_buffer = self.raw_buffer[vad_window:]
+            seg = self._process_window(window)
+            if seg is not None:
+                out.append(seg)
+
+        if out:
+            return np.concatenate(out)
+        return None
+
+    def _process_window(self, window: np.ndarray) -> Optional[np.ndarray]:
+        prob = self.model(torch.from_numpy(window).float(), self.sample_rate).item()
+        is_speech_now = prob >= self.threshold
+
+        if is_speech_now:
+            if not self.is_speech:
+                # Onset: flush pre-roll + this window so the first word survives.
+                self.is_speech = True
+                self.silence_run = 0
+                pre = list(self.preroll)
+                self.preroll.clear()
+                self.preroll_len = 0
+                pre.append(window)
+                return np.concatenate(pre)
+            self.silence_run = 0
+            return window
+
+        # Below threshold:
+        if self.is_speech:
+            self.silence_run += len(window)
+            if self.silence_run <= self.hangover_samples:
+                return window  # still within hangover, keep forwarding
+            # Hangover exceeded -> close the gate.
+            self.is_speech = False
+            self.silence_run = 0
+            self.model.reset_states()
+            return None
+
+        # Idle silence: keep a rolling pre-roll window, forward nothing.
+        self.preroll.append(window)
+        self.preroll_len += len(window)
+        while self.preroll_len > self.pre_roll_samples and len(self.preroll) > 1:
+            removed = self.preroll.popleft()
+            self.preroll_len -= len(removed)
+        return None
 
 
 class VoiceActivityDetector:

@@ -3,6 +3,7 @@ Main entry point for the Live Translation System.
 """
 
 import asyncio
+import os
 import yaml
 import logging
 import argparse
@@ -12,6 +13,13 @@ import warnings
 
 # Suppress benign warning from multiprocessing.resource_tracker on shutdown
 warnings.filterwarnings("ignore", category=UserWarning, module="multiprocessing.resource_tracker")
+
+# Load environment variables from a local .env file (e.g. GEMINI_API_KEY).
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -42,31 +50,35 @@ def load_config(config_path: str = "config.yaml") -> dict:
     return {}
 
 
-def create_components(config: dict):
-    """Create all pipeline components from config."""
-    
-    # Audio capture
+def create_audio_capture(config: dict):
+    """Create the audio capture source from config (mic or file)."""
     audio_config = config.get("audio", {})
     if audio_config.get('input_file'):
         logger.info(f"Using file input: {audio_config['input_file']}")
         from src.file_audio_capture import FileAudioCapture
-        audio_capture = FileAudioCapture(
+        return FileAudioCapture(
             file_path=audio_config['input_file'],
             sample_rate=audio_config.get("sample_rate", 16000),
             channels=audio_config.get("channels", 1),
             chunk_duration=audio_config.get("chunk_duration", 0.1),
             loop=True
         )
-    else:
-        logger.info("Using microphone input")
-        audio_capture = AudioCapture(
-            device_name=audio_config.get("device", "X32"),
-            sample_rate=audio_config.get("sample_rate", 16000),
-            channels=audio_config.get("channels", 1),
-            chunk_duration=audio_config.get("chunk_duration", 0.1),
-            input_channel=audio_config.get("input_channel"),
-        )
-    
+    logger.info("Using microphone input")
+    return AudioCapture(
+        device_name=audio_config.get("device", "X32"),
+        sample_rate=audio_config.get("sample_rate", 16000),
+        channels=audio_config.get("channels", 1),
+        chunk_duration=audio_config.get("chunk_duration", 0.1),
+        input_channel=audio_config.get("input_channel"),
+    )
+
+
+def create_components(config: dict):
+    """Create all pipeline components from config."""
+
+    # Audio capture
+    audio_capture = create_audio_capture(config)
+
     # Voice Activity Detection with sentence-level chunking
     vad_config = config.get("vad", {})
     try:
@@ -167,36 +179,93 @@ async def preload_models(transcriber, translator, synthesizer):
     logger.info("Models preloaded")
 
 
+def create_gemini_pipeline(config: dict):
+    """Build the Gemini Live Translate pipeline (no local models needed)."""
+    from src.gemini_translator import GeminiTranslationPipeline
+
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Gemini Live mode requires an API key. Set GEMINI_API_KEY in your "
+            ".env file (or environment) and restart. Get one at "
+            "https://aistudio.google.com/apikey"
+        )
+
+    trans_config = config.get("translation", {})
+    gemini_config = config.get("gemini", {})
+
+    audio_capture = create_audio_capture(config)
+
+    # Speech gate: only stream audio during speech so we don't pay to send
+    # silence. Falls back to streaming everything if Silero VAD can't load.
+    speech_gate = None
+    if gemini_config.get("vad_gating", True):
+        try:
+            from src.vad import SpeechGate
+            vad_config = config.get("vad", {})
+            speech_gate = SpeechGate(
+                threshold=vad_config.get("threshold", 0.5),
+                sample_rate=config.get("audio", {}).get("sample_rate", 16000),
+                pre_roll_duration=gemini_config.get("gate_pre_roll", 0.3),
+                hangover_duration=gemini_config.get("gate_hangover", 0.8),
+            )
+        except Exception as e:
+            logger.warning(f"Could not load speech gate ({e}); streaming all audio")
+            speech_gate = None
+
+    pipeline = GeminiTranslationPipeline(
+        audio_capture=audio_capture,
+        api_key=api_key,
+        target_lang=trans_config.get("target_lang", "fa"),
+        source_lang=trans_config.get("source_lang", "auto"),
+        model=gemini_config.get("model", "gemini-3.5-live-translate-preview"),
+        echo_target_language=gemini_config.get("echo_target_language", True),
+        speech_gate=speech_gate,
+    )
+    logger.info(
+        f"Gemini Live Translate mode enabled (no local models loaded, "
+        f"vad_gating={'on' if speech_gate else 'off'})"
+    )
+    return pipeline
+
+
 async def run_server(config: dict):
     """Run the translation server."""
     import uvicorn
-    
-    # Create components
-    logger.info("Initializing components...")
-    audio_capture, vad, transcriber, translator, synthesizer = create_components(config)
-    
-    # Preload models
-    await preload_models(transcriber, translator, synthesizer)
-    
-    # Create pipeline with parallel processing
-    pipeline_config = config.get("pipeline", {})
-    max_workers = pipeline_config.get("max_workers", 3)
-    
-    from src.pipeline import ParallelTranslationPipeline
-    pipeline = ParallelTranslationPipeline(
-        audio_capture=audio_capture,
-        vad=vad,
-        transcriber=transcriber,
-        translator=translator,
-        synthesizer=synthesizer,
-        max_workers=max_workers,
-    )
-    
-    logger.info(f"Pipeline configured with {max_workers} parallel workers")
-    
+
+    backend = config.get("translation", {}).get("backend", "nllb")
+
+    if backend == "gemini-live":
+        # Online mode: one Gemini Live session replaces the STT/Trans/TTS stack.
+        logger.info("Initializing Gemini Live Translate pipeline...")
+        pipeline = create_gemini_pipeline(config)
+    else:
+        # Local, offline mode: the four-model pipeline.
+        logger.info("Initializing components...")
+        audio_capture, vad, transcriber, translator, synthesizer = create_components(config)
+
+        # Preload models
+        await preload_models(transcriber, translator, synthesizer)
+
+        # Create pipeline with parallel processing
+        pipeline_config = config.get("pipeline", {})
+        max_workers = pipeline_config.get("max_workers", 3)
+
+        from src.pipeline import ParallelTranslationPipeline
+        pipeline = ParallelTranslationPipeline(
+            audio_capture=audio_capture,
+            vad=vad,
+            transcriber=transcriber,
+            translator=translator,
+            synthesizer=synthesizer,
+            max_workers=max_workers,
+        )
+
+        logger.info(f"Pipeline configured with {max_workers} parallel workers")
+
     # Create app
     app = create_app(pipeline)
-    
+
     # Server config
     server_config = config.get("server", {})
     host = server_config.get("host", "0.0.0.0")

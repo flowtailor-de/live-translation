@@ -17,6 +17,9 @@ stt:
   device: mlx
   compute_type: int8
 translation:
+  # backend selects the engine:
+  #   nllb / translategemma-mlx / translategemma  -> local, offline pipeline
+  #   gemini-live                                 -> online Gemini Live Translate
   backend: translategemma-mlx
   source_lang: de
   target_lang: fa
@@ -34,6 +37,15 @@ tts:
   model: fa_IR-amir-medium
   speaker_id: 0
   length_scale: 1.0
+# Used only when translation.backend == gemini-live.
+# Source language is auto-detected; target_lang above sets the output language.
+# Requires GEMINI_API_KEY in your .env file.
+gemini:
+  model: gemini-3.5-live-translate-preview
+  echo_target_language: true   # parrot audio that is already in the target language
+  vad_gating: true             # only stream audio during speech (skip paying for silence)
+  gate_pre_roll: 0.3           # seconds of audio kept before speech onset (avoids clipping)
+  gate_hangover: 0.8           # seconds to keep streaming after speech stops
 server:
   host: 0.0.0.0
   port: 8000

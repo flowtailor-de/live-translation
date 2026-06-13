@@ -14,14 +14,26 @@ Real-time, offline-capable audio translation system designed for low-latency Ger
 
 The system follows a linear processing pipeline orchestrated asynchronously:
 
+The same **Capture** and **Broadcast** stages wrap two interchangeable **Translate**
+engines (selected by `translation.backend`):
+
 ```mermaid
 graph LR
-    A[Audio Input\nX32 Event Stream] -->|Chunk Stream| B[VAD\nSilero]
-    B -->|Speech Segments| C[STT\nWhisper MLX]
-    C -->|German Text| D[Translation\nNLLB-200]
-    D -->|Farsi Text| E[TTS\nPiper]
+    A[Audio Input\nMic / X32] -->|Chunk Stream| ENG{Translate engine}
+
+    subgraph Local["LOCAL mode (offline)"]
+        B[VAD\nSilero] --> C[STT\nWhisper MLX] --> D[Translation\nTranslateGemma] --> E[TTS\nPiper]
+    end
+
+    subgraph Gemini["GEMINI mode (online)"]
+        G1[Speech Gate\nSilero] --> G2[Gemini Live Translate\naudio in -> audio out]
+    end
+
+    ENG --> B
+    ENG --> G1
     E -->|Audio Stream| F[Web Server\nFastAPI]
-    F -->|WebSocket| G[Client Devices\nSmartphones]
+    G2 -->|Audio Stream| F
+    F -->|WebSocket| H[Client Devices\nSmartphones]
 ```
 
 ## 🛠 Technical Stack
@@ -92,6 +104,34 @@ translation:
   source_lang: "deu_Latn"
   target_lang: "pes_Arab"
 ```
+
+## 🌐 Translation Modes
+
+The system has two interchangeable translation engines. Audio capture and the
+web/phone broadcast are identical in both — only the middle "translate" stage
+differs. Switch via the **Model Backend** dropdown in the launcher, or
+`translation.backend` in `config.yaml`.
+
+| Mode | `backend` value | Runs | Needs |
+| --- | --- | --- | --- |
+| **Local** (default) | `translategemma-mlx`, `nllb`, … | Fully offline on your Mac (Whisper → translate → Piper) | Nothing online |
+| **Gemini Live** | `gemini-live` | Google's Gemini Live Translate over the internet | API key + connection |
+
+**Enabling Gemini Live mode:**
+
+1. Copy `.env.example` to `.env` and set `GEMINI_API_KEY=...`
+   (get a key at https://aistudio.google.com/apikey).
+2. Set `translation.backend: gemini-live` (or pick `gemini-live` in the launcher).
+3. `target_lang` sets the output language. The **source language is auto-detected**,
+   so the Source dropdown is ignored in this mode. The spoken voice is Google's
+   (not the local Piper voice), and connections auto-reconnect for long events.
+
+**Cost & the speech gate:** Gemini Live Translate is billed per second of audio
+(input ~$0.0053/min, output ~$0.0315/min). To avoid paying to stream silence, a
+**speech gate** (`gemini.vad_gating`, on by default) sends audio only while someone
+is speaking. For a 2-hour session with ~35 min of actual speech, expect roughly
+**$1–1.50** (output audio dominates). Tune `gate_pre_roll` / `gate_hangover` if the
+start or end of sentences gets clipped.
 
 ## 🚦 Usage
 
